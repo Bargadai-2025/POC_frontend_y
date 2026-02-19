@@ -161,6 +161,58 @@ def _normalize_phone_91(phone: Any) -> str:
     return "91" + digits[-10:] if len(digits) >= 10 else "91" + digits.zfill(10)
 
 
+def _flask_email_mx_record_count(mx_records: Any) -> Any:
+    """Flask mapping: email_mx_record_count = count of items in email_mx_records."""
+    if mx_records is None:
+        return 0
+    if isinstance(mx_records, list):
+        return len(mx_records)
+    if isinstance(mx_records, dict):
+        return len(mx_records)
+    if isinstance(mx_records, str):
+        s = mx_records.strip()
+        if not s:
+            return 0
+        try:
+            parsed = json.loads(s)
+            return len(parsed) if isinstance(parsed, (list, dict)) else (1 if parsed else 0)
+        except (json.JSONDecodeError, TypeError):
+            return 0
+    return 0
+
+
+def _flask_email_string_length(account_length: Any, digit_count: Any) -> Any:
+    """Flask mapping: email_string_length = email_account_length - email_account_digit_count (max 0)."""
+    try:
+        al = None if account_length is None or account_length == "" else float(account_length)
+        dc = None if digit_count is None or digit_count == "" else float(digit_count)
+    except (ValueError, TypeError):
+        return ""
+    if al is not None and dc is not None:
+        return max(0, int(al - dc))
+    return ""
+
+
+def _flask_phone_reachability(phone_valid: Any, phone_active: Any) -> bool:
+    """Flask mapping: Phone_No_Reachability = phone_valid AND phone_active (boolean)."""
+    def to_bool(val: Any) -> bool:
+        if val is None or val == "":
+            return False
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, (int, float)):
+            return bool(val)
+        if isinstance(val, str):
+            v = val.lower().strip()
+            if v in ("true", "1", "yes", "y"):
+                return True
+            if v in ("false", "0", "no", "n", ""):
+                return False
+            return bool(val)
+        return bool(val)
+    return to_bool(phone_valid) and to_bool(phone_active)
+
+
 def _normalize_flat_key(k: str) -> str:
     """Strip report_ prefix and lowercase for flexible lookup."""
     s = (k or "").strip().lower()
@@ -621,6 +673,11 @@ class ExcelHandler:
                 }
                 if result.get("status") in ("SUCCESS", "INCOMPLETE") and "raw_response" in result:
                     row_data.update(ExcelHandler.flatten_response(result["raw_response"]))
+                # Flask mapping: overwrite these three with exact Flask calculations
+                row_data["email_mx_record_count"] = _flask_email_mx_record_count(row_data.get("email_mx_records"))
+                _sl_calc = _flask_email_string_length(row_data.get("email_account_length"), row_data.get("email_account_digit_count"))
+                row_data["email_string_length"] = _sl_calc if _sl_calc != "" else row_data.get("email_string_length", "")
+                row_data["Phone_No_Reachability"] = _flask_phone_reachability(row_data.get("phone_valid"), row_data.get("phone_active"))
                 # Keep input columns exactly as submitted (API response must not overwrite)
                 row_data["input_email"] = submitted_email
                 row_data["input_phone"] = _normalize_phone_91(result.get("phone", ""))
@@ -664,6 +721,11 @@ class ExcelHandler:
                 }
                 if result.get("status") in ("SUCCESS", "INCOMPLETE") and "raw_response" in result:
                     row_data.update(ExcelHandler.flatten_response(result["raw_response"]))
+                # Flask mapping: overwrite these three with exact Flask calculations
+                row_data["email_mx_record_count"] = _flask_email_mx_record_count(row_data.get("email_mx_records"))
+                _sl_calc = _flask_email_string_length(row_data.get("email_account_length"), row_data.get("email_account_digit_count"))
+                row_data["email_string_length"] = _sl_calc if _sl_calc != "" else row_data.get("email_string_length", "")
+                row_data["Phone_No_Reachability"] = _flask_phone_reachability(row_data.get("phone_valid"), row_data.get("phone_active"))
                 row_data["input_email"] = submitted_email
                 row_data["input_phone"] = _normalize_phone_91(result.get("phone", ""))
                 for c in DATA_COLUMNS_ORDER:
