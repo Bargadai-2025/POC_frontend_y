@@ -73,8 +73,8 @@ DATA_COLUMNS_ORDER = [
     "phone_data_leaks_first_seen",
     "phone_data_leaks_last_seen",
 ]
-# Order matches Flask EXCEL_COLUMN_WHITELIST end: email_status, data_leak_status, phone_status, status (+ error for FastAPI)
-STATUS_COLUMNS_AT_END = ["email_status", "data_leak_status", "phone_status", "status", "error"]
+# Order: email_status, data_leak_status, phone_status, then result_status and result_err
+STATUS_COLUMNS_AT_END = ["email_status", "data_leak_status", "phone_status", "result_status", "result_err"]
 
 
 def _format_list_plain(val: Any) -> str:
@@ -96,7 +96,7 @@ def _format_list_plain(val: Any) -> str:
 
 
 def _format_data_leaks_records(val: Any) -> str:
-    """Format data leaks list of dicts as 'Title: X, Breach Date: Y; ' (only Title and Breach Date, semicolon after each)."""
+    """Format data leaks list of dicts as '(Title: X, Breach Date: Y); ' — each item in parentheses."""
     if val is None:
         return ""
     items = []
@@ -111,9 +111,9 @@ def _format_data_leaks_records(val: Any) -> str:
         if isinstance(item, dict):
             title = item.get("title") or item.get("Title") or item.get("name") or ""
             breach = item.get("breach_date") or item.get("Breach Date") or item.get("breach_date_date") or ""
-            items.append(f"Title: {title}, Breach Date: {breach};")
+            items.append(f"(Title: {title}, Breach Date: {breach});")
         else:
-            items.append(str(item) + ";")
+            items.append(f"({str(item)});")
     return " ".join(items)
 
 
@@ -141,6 +141,21 @@ def _camel_to_snake(name: str) -> str:
             out.append("_")
         out.append(c.lower())
     return "".join(out).replace(" ", "_").replace("-", "_").replace("__", "_").strip("_")
+
+
+def _is_valid_phone_for_output(phone: Any) -> bool:
+    """True if string looks like a 10-digit number or 12-digit with 91 (India); exclude other alternates."""
+    if phone is None or (isinstance(phone, str) and not phone.strip()):
+        return False
+    s = str(phone).strip()
+    digits = "".join(c for c in s if c.isdigit())
+    if len(digits) == 10:
+        return True
+    if len(digits) == 12 and digits.startswith("91"):
+        return True
+    if len(digits) == 11 and digits.startswith("91"):
+        return True
+    return False
 
 
 def _normalize_phone_91(phone: Any) -> str:
@@ -186,6 +201,7 @@ def _flask_email_mx_record_count(mx_records: Any) -> Any:
             pass
         if s.startswith("[") and "]" in s:
             return max(0, s.count(",") + 1)
+            return len([x for x in s.split(",") if x.strip()])
     return 0
 
 
@@ -618,11 +634,15 @@ class ExcelHandler:
                 if isinstance(mx_records, list):
                     out["email_mx_record_count"] = len(mx_records)
                 elif isinstance(mx_records, str):
-                    try:
-                        arr = json.loads(mx_records) if mx_records.strip().startswith("[") else []
-                        out["email_mx_record_count"] = len(arr) if arr else ""
-                    except Exception:
-                        out["email_mx_record_count"] = ""
+                    s = mx_records.strip()
+                    if s.startswith("["):
+                        try:
+                            arr = json.loads(s)
+                            out["email_mx_record_count"] = len(arr) if isinstance(arr, list) else 1
+                        except Exception:
+                            out["email_mx_record_count"] = max(0, s.count(",") + 1)
+                    else:
+                        out["email_mx_record_count"] = len([x for x in s.split(",") if x.strip()])
                 else:
                     out["email_mx_record_count"] = mx_records
         # Special formatting: *_update = list without brackets/quotes
@@ -631,11 +651,15 @@ class ExcelHandler:
         phone_list = out.get("phone_numbers_list") or flat.get("phone_numbers_list") or _find_value_in_flat(flat, "phone_numbers_list")
         if phone_list is not None:
             plain = _format_list_plain(phone_list)
-            # Normalize each number to 91 + 10 digits for output
             if plain:
-                parts = [p.strip() for p in plain.split(",")]
-                out["phone_numbers_list_update"] = ", ".join(_normalize_phone_91(p) for p in parts if p)
+                parts = [p.strip() for p in plain.split(",") if p and p.strip()]
+                valid_parts = [p for p in parts if _is_valid_phone_for_output(p)]
+                out["phone_numbers_amount"] = len(valid_parts)
+                out["phone_numbers_list"] = ", ".join(valid_parts) if valid_parts else ""
+                out["phone_numbers_list_update"] = ", ".join(_normalize_phone_91(p) for p in valid_parts)
             else:
+                out["phone_numbers_amount"] = 0
+                out["phone_numbers_list"] = ""
                 out["phone_numbers_list_update"] = ""
         else:
             out["phone_numbers_list_update"] = out.get("phone_numbers_list_update", "")
@@ -707,8 +731,8 @@ class ExcelHandler:
                 row_data["email_status"] = row_data.get("email_status", "")
                 row_data["phone_status"] = row_data.get("phone_status", "")
                 row_data["data_leak_status"] = row_data.get("data_leak_status", "")
-                row_data["status"] = result.get("status", "")
-                row_data["error"] = result.get("error", "")
+                row_data["result_status"] = result.get("status", "")
+                row_data["result_err"] = result.get("error", "")
                 row = [row_data.get(col, "") for col in columns]
                 ws.append(row)
 
@@ -763,8 +787,8 @@ class ExcelHandler:
                 row_data["email_status"] = row_data.get("email_status", "")
                 row_data["phone_status"] = row_data.get("phone_status", "")
                 row_data["data_leak_status"] = row_data.get("data_leak_status", "")
-                row_data["status"] = result.get("status", "")
-                row_data["error"] = result.get("error", "")
+                row_data["result_status"] = result.get("status", "")
+                row_data["result_err"] = result.get("error", "")
                 row = [row_data.get(col, "") for col in columns]
                 ws.append(row)
             buffer = BytesIO()
