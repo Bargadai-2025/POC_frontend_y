@@ -1,3 +1,4 @@
+import ast
 import json
 from io import BytesIO
 from openpyxl import load_workbook, Workbook
@@ -162,7 +163,7 @@ def _normalize_phone_91(phone: Any) -> str:
 
 
 def _flask_email_mx_record_count(mx_records: Any) -> Any:
-    """Flask mapping: email_mx_record_count = count of items in email_mx_records."""
+    """Return total count of items in email_mx_records (list, dict, or JSON string)."""
     if mx_records is None:
         return 0
     if isinstance(mx_records, list):
@@ -177,7 +178,14 @@ def _flask_email_mx_record_count(mx_records: Any) -> Any:
             parsed = json.loads(s)
             return len(parsed) if isinstance(parsed, (list, dict)) else (1 if parsed else 0)
         except (json.JSONDecodeError, TypeError):
-            return 0
+            pass
+        try:
+            parsed = ast.literal_eval(s)
+            return len(parsed) if isinstance(parsed, (list, dict)) else (1 if parsed else 0)
+        except (ValueError, SyntaxError, TypeError):
+            pass
+        if s.startswith("[") and "]" in s:
+            return max(0, s.count(",") + 1)
     return 0
 
 
@@ -601,19 +609,22 @@ class ExcelHandler:
                 if "reachability" in key_lower or "reachability" in key_snake or "noreachability" in key_lower or "no_reachability" in key_snake:
                     out["Phone_No_Reachability"] = v
                     break
-        # email_mx_record_count = count of MX records when not provided
+        # email_mx_record_count = count of MX records; ensure email_mx_records is in out so per-row count works
         mx_records = out.get("email_mx_records") or flat.get("email_mx_records") or _find_value_in_flat(flat, "email_mx_records")
-        if out.get("email_mx_record_count") in (None, "") and mx_records is not None:
-            if isinstance(mx_records, list):
-                out["email_mx_record_count"] = len(mx_records)
-            elif isinstance(mx_records, str):
-                try:
-                    arr = json.loads(mx_records) if mx_records.strip().startswith("[") else []
-                    out["email_mx_record_count"] = len(arr) if arr else ""
-                except Exception:
-                    out["email_mx_record_count"] = ""
-            else:
-                out["email_mx_record_count"] = mx_records
+        if mx_records is not None:
+            if out.get("email_mx_records") is None:
+                out["email_mx_records"] = mx_records
+            if out.get("email_mx_record_count") in (None, ""):
+                if isinstance(mx_records, list):
+                    out["email_mx_record_count"] = len(mx_records)
+                elif isinstance(mx_records, str):
+                    try:
+                        arr = json.loads(mx_records) if mx_records.strip().startswith("[") else []
+                        out["email_mx_record_count"] = len(arr) if arr else ""
+                    except Exception:
+                        out["email_mx_record_count"] = ""
+                else:
+                    out["email_mx_record_count"] = mx_records
         # Special formatting: *_update = list without brackets/quotes
         email_addrs = out.get("email_addresses") or flat.get("email_addresses") or _find_value_in_flat(flat, "email_addresses")
         out["email_addresses_update"] = _format_list_plain(email_addrs) if email_addrs is not None else out.get("email_addresses_update", "")
@@ -674,7 +685,16 @@ class ExcelHandler:
                 if result.get("status") in ("SUCCESS", "INCOMPLETE") and "raw_response" in result:
                     row_data.update(ExcelHandler.flatten_response(result["raw_response"]))
                 # Flask mapping: overwrite these three with exact Flask calculations
-                row_data["email_mx_record_count"] = _flask_email_mx_record_count(row_data.get("email_mx_records"))
+                mx_val = row_data.get("email_mx_records") or row_data.get("emailMxRecords") or row_data.get("mx_records")
+                mx_count = _flask_email_mx_record_count(mx_val)
+                if mx_count == 0 and row_data.get("email_mx_record_count") not in (None, ""):
+                    try:
+                        existing = row_data["email_mx_record_count"]
+                        if isinstance(existing, (int, float)) and int(existing) >= 0:
+                            mx_count = int(existing)
+                    except (TypeError, ValueError):
+                        pass
+                row_data["email_mx_record_count"] = mx_count
                 _sl_calc = _flask_email_string_length(row_data.get("email_account_length"), row_data.get("email_account_digit_count"))
                 row_data["email_string_length"] = _sl_calc if _sl_calc != "" else row_data.get("email_string_length", "")
                 row_data["Phone_No_Reachability"] = _flask_phone_reachability(row_data.get("phone_valid"), row_data.get("phone_active"))
@@ -722,7 +742,16 @@ class ExcelHandler:
                 if result.get("status") in ("SUCCESS", "INCOMPLETE") and "raw_response" in result:
                     row_data.update(ExcelHandler.flatten_response(result["raw_response"]))
                 # Flask mapping: overwrite these three with exact Flask calculations
-                row_data["email_mx_record_count"] = _flask_email_mx_record_count(row_data.get("email_mx_records"))
+                mx_val = row_data.get("email_mx_records") or row_data.get("emailMxRecords") or row_data.get("mx_records")
+                mx_count = _flask_email_mx_record_count(mx_val)
+                if mx_count == 0 and row_data.get("email_mx_record_count") not in (None, ""):
+                    try:
+                        existing = row_data["email_mx_record_count"]
+                        if isinstance(existing, (int, float)) and int(existing) >= 0:
+                            mx_count = int(existing)
+                    except (TypeError, ValueError):
+                        pass
+                row_data["email_mx_record_count"] = mx_count
                 _sl_calc = _flask_email_string_length(row_data.get("email_account_length"), row_data.get("email_account_digit_count"))
                 row_data["email_string_length"] = _sl_calc if _sl_calc != "" else row_data.get("email_string_length", "")
                 row_data["Phone_No_Reachability"] = _flask_phone_reachability(row_data.get("phone_valid"), row_data.get("phone_active"))
