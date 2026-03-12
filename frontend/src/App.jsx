@@ -2,7 +2,8 @@ import { useState, useRef } from 'react'; // ✅ added useRef
 import axios from 'axios';
 import './App.css';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+// const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+const API_BASE = 'http://127.0.0.1:8000';
 
 function App() {
   const [file, setFile] = useState(null);
@@ -100,6 +101,20 @@ function App() {
             setResult({ summary, resultBlob: downloadRes.data, resultFilename });
             setUploading(false);
 
+            // Automatically trigger download after a short delay
+            setTimeout(() => {
+              const url = URL.createObjectURL(downloadRes.data);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = resultFilename || "fraud_detection_result.xlsx";
+
+              document.body.appendChild(a); // required in some browsers
+              a.click();                    // trigger download
+              a.remove();
+
+              URL.revokeObjectURL(url);
+            }, 1500);
+
           } else if (data.status === 'failed') {
             clearInterval(pollingRef.current);
             setError(data.error || 'Processing failed. Please try again.');
@@ -124,7 +139,7 @@ function App() {
             const text = await data.text();
             const parsed = JSON.parse(text);
             if (parsed.detail) message = typeof parsed.detail === 'string' ? parsed.detail : parsed.detail;
-          } catch (_) {}
+          } catch (_) { }
         }
       }
       setError(message);
